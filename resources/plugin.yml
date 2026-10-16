@@ -1,0 +1,14 @@
+name: FakePlayer
+version: '2.0'
+main: dev.egor.fakeplayer.FakePlayerPlugin
+api-version: '26.3'
+description: Carpet-style fake players for Purpur/Paper 26.3
+commands:
+  player:
+    description: Spawn and control fake players
+    usage: /player help
+    permission: fakeplayer.use
+permissions:
+  fakeplayer.use:
+    description: Use /player
+    default: true
