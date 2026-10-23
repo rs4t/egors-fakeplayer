@@ -1,3 +1,5 @@
+<img src="art/icon.png" width="128" align="right">
+
 # Egor's FakePlayer
 
 Carpet-style fake players for **Paper / Purpur 26.3**. Bots are real server-side players:
