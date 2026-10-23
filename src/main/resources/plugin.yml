@@ -1,0 +1,52 @@
+name: EgorsFakePlayer
+version: '${version}'
+main: dev.egor.fakeplayer.FakePlayerPlugin
+api-version: '${mcVersion}'
+description: Carpet-style fake players that load chunks, attack, mine, place, follow and survive restarts
+authors: [Egor]
+website: https://modrinth.com/plugin/egors-fakeplayer
+commands:
+  player:
+    description: Spawn and control fake players
+    usage: /player help
+    aliases: [fakeplayer, fp]
+    permission: fakeplayer.use
+permissions:
+  fakeplayer.use:
+    description: Use /player at all
+    default: true
+  fakeplayer.spawn:
+    description: Spawn bots (where you stand)
+    default: true
+  fakeplayer.spawn.location:
+    description: Spawn bots at given coordinates / worlds
+    default: op
+  fakeplayer.others:
+    description: Control and remove bots owned by other players
+    default: op
+  fakeplayer.bypass-limit:
+    description: Ignore limits.max-bots-per-player
+    default: op
+  fakeplayer.admin:
+    description: /player reload
+    default: op
+  fakeplayer.action.*:
+    description: All bot actions
+    default: true
+    children:
+      fakeplayer.action.attack: true
+      fakeplayer.action.use: true
+      fakeplayer.action.jump: true
+      fakeplayer.action.mine: true
+      fakeplayer.action.drop: true
+      fakeplayer.action.dropstack: true
+      fakeplayer.action.swaphands: true
+      fakeplayer.action.hotbar: true
+      fakeplayer.action.move: true
+      fakeplayer.action.look: true
+      fakeplayer.action.turn: true
+      fakeplayer.action.sneak: true
+      fakeplayer.action.sprint: true
+      fakeplayer.action.inventory: true
+      fakeplayer.action.follow: true
+      fakeplayer.action.mount: true

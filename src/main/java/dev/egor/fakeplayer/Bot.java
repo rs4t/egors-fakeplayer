@@ -10,13 +10,19 @@ import io.netty.util.ReferenceCountUtil;
 import io.papermc.paper.util.KeepAlive;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
@@ -41,11 +47,15 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
+import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.level.storage.ValueInput;
@@ -53,7 +63,10 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import com.mojang.authlib.properties.Property;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.craftbukkit.CraftWorld;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.util.Vector;
@@ -61,7 +74,7 @@ import org.bukkit.util.Vector;
 /**
  * A server-side player with no client. Physics run here every tick; actions mimic what a vanilla
  * client would do (same packet handlers / game mode calls), so plugins and protections see a normal player.
- * Compiled against Purpur 26.3 internals: rebuild after server updates.
+ * Compiled against Paper internals for one Minecraft version: rebuild for every new version.
  */
 final class Bot extends ServerPlayer {
     enum Action { ATTACK, USE, JUMP, DROP, DROP_STACK, SWAP_HANDS }
@@ -78,7 +91,23 @@ final class Bot extends ServerPlayer {
         }
     }
 
+    /** Everything needed to bring a bot back: across restarts and respawns. */
+    record State(String name, UUID owner, Location location, Property skin, Map<Action, Integer> actions,
+                 float forward, float strafe, boolean sneaking, boolean sprinting, UUID follow) {
+        State at(Location where) {
+            return new State(name, owner, where, skin, actions, forward, strafe, sneaking, sprinting, follow);
+        }
+    }
+
+    private static final Set<Item> BAD_FOOD = Set.of(Items.ROTTEN_FLESH, Items.SPIDER_EYE, Items.POISONOUS_POTATO,
+        Items.PUFFERFISH, Items.CHORUS_FRUIT, Items.SUSPICIOUS_STEW);
+
     private final FakePlayerPlugin plugin;
+    /** Who spawned it; null = console. */
+    final UUID owner;
+    UUID follow;
+    private int restoreSlot = -1; // hotbar slot to go back to after auto-eating
+    private boolean teleporting;
     private final EnumMap<Action, Schedule> actions = new EnumMap<>(Action.class);
     private net.minecraft.network.Connection link;
     float forward, strafe;
@@ -91,22 +120,24 @@ final class Bot extends ServerPlayer {
     private float miningProgress;
     private int blockDelay, useDelay, sequence;
 
-    private Bot(FakePlayerPlugin plugin, MinecraftServer server, ServerLevel level, GameProfile profile, ClientInformation info) {
+    private Bot(FakePlayerPlugin plugin, MinecraftServer server, ServerLevel level, GameProfile profile, ClientInformation info, UUID owner) {
         super(server, level, profile, info);
         this.plugin = plugin;
+        this.owner = owner;
     }
 
     /** Mirrors PrepareSpawnTask.Ready#spawn, but at the given position. */
-    static Bot spawn(FakePlayerPlugin plugin, GameProfile profile, ServerLevel level, double x, double y, double z, float yaw, float pitch) {
+    static Bot spawn(FakePlayerPlugin plugin, GameProfile profile, UUID owner, Location at) {
+        ServerLevel level = ((CraftWorld) at.getWorld()).getHandle();
         MinecraftServer server = level.getServer();
         // 0x7F = all skin layers visible (hat, jacket, sleeves...)
         ClientInformation info = new ClientInformation("en_us", 2, ChatVisiblity.FULL, true, 0x7F, HumanoidArm.RIGHT, false, true, ParticleStatus.MINIMAL);
-        Bot bot = new Bot(plugin, server, level, profile, info);
+        Bot bot = new Bot(plugin, server, level, profile, info, owner);
         Optional<ValueInput> data = server.getPlayerList().loadPlayerData(new NameAndId(profile))
             .map(tag -> TagValueInput.create(ProblemReporter.DISCARDING, server.registryAccess(), tag));
         data.ifPresent(bot::load);
         if (bot.getHealth() <= 0) bot.setHealth(bot.getMaxHealth());
-        bot.snapTo(x, y, z, yaw, pitch);
+        bot.snapTo(at.getX(), at.getY(), at.getZ(), at.getYaw(), at.getPitch());
         bot.link = new BotConnection();
         server.getPlayerList().placeNewPlayer(bot.link, bot, new CommonListenerCookie(profile, 0, info, false, null, new HashSet<>(), new KeepAlive()));
         data.ifPresent(d -> {
@@ -132,7 +163,8 @@ final class Bot extends ServerPlayer {
             setDeltaMovement(pendingVelocity);
             pendingVelocity = null;
         }
-        tickActions();
+        tickFollow();
+        tickActions(tickAutoEat());
         super.tick();
         doTick(); // a real player's movement tick is driven by its connection; ours by the entity tick
         if (tickCount % 10 == 0) level().getChunkSource().move(this); // keep chunk loading centered on the bot
@@ -155,7 +187,8 @@ final class Bot extends ServerPlayer {
         super.die(source);
         if (getHealth() > 0) return; // death event cancelled
         setHealth(getMaxHealth()); // saved data must not be dead on the next spawn
-        despawnLater(Component.literal("Died"));
+        if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, () -> plugin.botDied(this));
+        else despawn(Component.literal("Died"));
     }
 
     /** Disconnects like a real player: quit event, player data saved, removed from the world. */
@@ -180,6 +213,90 @@ final class Bot extends ServerPlayer {
         actions.clear();
         forward = strafe = 0;
         sneaking = sprinting = false;
+        follow = null;
+    }
+
+    State state() {
+        Map<Action, Integer> repeating = new LinkedHashMap<>();
+        actions.forEach((action, s) -> {
+            if (!s.once) repeating.put(action, s.interval);
+        });
+        Property skin = getGameProfile().properties().get("textures").stream().findFirst().orElse(null);
+        return new State(getGameProfile().name(), owner, getBukkitEntity().getLocation(), skin, repeating,
+            forward, strafe, sneaking, sprinting, follow);
+    }
+
+    void restore(State state) {
+        state.actions().forEach((action, interval) -> setAction(action, interval, false));
+        forward = state.forward();
+        strafe = state.strafe();
+        sneaking = state.sneaking();
+        sprinting = state.sprinting();
+        follow = state.follow();
+    }
+
+    /** Gets on the closest rideable thing within 3 blocks. */
+    Entity mount() {
+        List<Entity> near = level().getEntities(this, getBoundingBox().inflate(3), e -> !(e instanceof Player));
+        near.sort(Comparator.comparingDouble(this::distanceToSqr));
+        for (Entity e : near) {
+            if (startRiding(e)) return e;
+        }
+        return null;
+    }
+
+    private void tickFollow() {
+        if (follow == null) return;
+        FakePlayerPlugin.Settings s = plugin.settings();
+        ServerPlayer target = level().getServer().getPlayerList().getPlayer(follow);
+        if (target == null || !s.follow()) {
+            follow = null;
+            forward = 0;
+            sprinting = false;
+            return;
+        }
+        double dist = Math.hypot(target.getX() - getX(), target.getZ() - getZ());
+        if (target.level() != level() || s.teleportDistance() > 0 && dist > s.teleportDistance()) {
+            if (!teleporting) { // not mid-tick: cross-world teleports move the entity between worlds
+                teleporting = true;
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    teleporting = false;
+                    if (follow != null && target.isAlive()) getBukkitEntity().teleport(target.getBukkitEntity());
+                });
+            }
+            return;
+        }
+        Vec3 d = target.getEyePosition().subtract(getEyePosition());
+        look((float) Math.toDegrees(Math.atan2(-d.x, d.z)), (float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
+        forward = dist > s.followDistance() ? 1 : 0;
+        sprinting = dist > s.sprintDistance();
+        if (forward > 0 && horizontalCollision && onGround()) jumpFromGround();
+        if (!actions.containsKey(Action.JUMP)) setJumping(forward > 0 && isInWater()); // swim up
+    }
+
+    /** Eats from the hotbar when hungry. Returns true while eating (other actions wait). */
+    private boolean tickAutoEat() {
+        if (restoreSlot >= 0) {
+            if (isUsingItem()) return true;
+            getInventory().setSelectedSlot(restoreSlot);
+            restoreSlot = -1;
+            return false;
+        }
+        FakePlayerPlugin.Settings s = plugin.settings();
+        if (!s.autoEat() || isUsingItem() || getFoodData().getFoodLevel() > s.eatBelow()) return false;
+        int previous = getInventory().getSelectedSlot();
+        for (int slot = 0; slot < 9; slot++) {
+            ItemStack stack = getInventory().getItem(slot);
+            FoodProperties food = stack.get(DataComponents.FOOD);
+            if (food == null || BAD_FOOD.contains(stack.getItem()) || !canEat(food.canAlwaysEat())) continue;
+            getInventory().setSelectedSlot(slot);
+            if (gameMode.useItem(this, level(), stack, InteractionHand.MAIN_HAND).consumesAction() && isUsingItem()) {
+                restoreSlot = previous;
+                return true;
+            }
+        }
+        getInventory().setSelectedSlot(previous);
+        return false;
     }
 
     void look(float yaw, float pitch) {
@@ -188,12 +305,13 @@ final class Bot extends ServerPlayer {
         setYHeadRot(getYRot());
     }
 
-    private void tickActions() {
+    private void tickActions(boolean eating) {
         float speed = sneaking ? (float) getAttributeValue(Attributes.SNEAKING_SPEED) : 1f;
         zza = forward * speed; // left strafe is positive, like the vanilla client
         xxa = strafe * speed;
         setShiftKeyDown(sneaking);
         setSprinting(sprinting && forward > 0 && !sneaking);
+        if (eating) return;
         for (Iterator<Map.Entry<Action, Schedule>> it = actions.entrySet().iterator(); it.hasNext(); ) {
             Map.Entry<Action, Schedule> e = it.next();
             Action action = e.getKey();

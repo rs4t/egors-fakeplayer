@@ -1,0 +1,94 @@
+# Egor's FakePlayer
+# /player reload applies changes without a restart.
+
+limits:
+  # Bots on the whole server. Each bot loads chunks like a real player does.
+  max-bots: 10
+  # Bots one player can own at a time (fakeplayer.bypass-limit ignores this).
+  max-bots-per-player: 2
+
+bots:
+  # Shown before bot names in the tab list and above their heads. MiniMessage format, "" to disable.
+  prefix: "<gray>[Bot] "
+  # Broadcast "<bot> joined/left the game".
+  join-leave-messages: true
+  # Give bots the skin of the Mojang account with the same name.
+  mojang-skins: true
+  # No Mojang account with that name: use the skin of whoever spawned the bot.
+  fallback-to-spawner-skin: true
+  # Bots don't count when skipping the night by sleeping.
+  ignore-sleep: true
+  # Bots pick up items lying around, like players.
+  pick-up-items: true
+
+# Bots that were online when the server stopped join again on startup, with their actions.
+rejoin-after-restart: true
+
+death:
+  # true: respawn at their bed or world spawn and carry on. false: removed when they die.
+  auto-respawn: false
+
+auto-eat:
+  enabled: true
+  # Eat food from the hotbar once hunger drops to this (20 = full).
+  below-food-level: 14
+
+follow:
+  enabled: true
+  # Walks until this close to the player (blocks).
+  distance: 3
+  # Sprints when further than this.
+  sprint-distance: 8
+  # Teleports to the player when further than this, or in another world. 0 = never teleport.
+  teleport-distance: 48
+
+# Actions nobody can use, e.g. [attack, drop]. Per-player control: fakeplayer.action.<name> permissions.
+# Actions: attack, use, jump, mine, drop, dropstack, swaphands, hotbar, move, look, turn,
+#          sneak, sprint, inventory, follow, mount
+disabled-actions: []
+
+# MiniMessage format: https://docs.advntr.dev/minimessage/format
+messages:
+  no-permission: "<red>You don't have permission to do that."
+  players-only: "<red>Only players can do that."
+  unknown-bot: "<red>No bot named <name>."
+  not-your-bot: "<red><name> isn't your bot."
+  action-disabled: "<red>That action is disabled on this server."
+  invalid-name: "<red>Bot names are 1-16 letters, digits or _."
+  already-exists: "<red>A bot named <name> already exists."
+  real-player-online: "<red><name> is a real player and is online."
+  server-limit: "<red>This server allows <max> bots at a time."
+  player-limit: "<red>You can own <max> bots at a time."
+  spawned: "<green>Spawned <name>."
+  spawned-your-skin: "<green>Spawned <name> <gray>(no Mojang skin for that name, using yours)"
+  spawned-default-skin: "<green>Spawned <name> <gray>(default skin)"
+  spawn-failed: "<red>Couldn't spawn <name>: <error>"
+  console-spawn: "<red>From the console: /player spawn <name> <x> <y> <z> [world]"
+  bad-coordinates: "<red>Bad coordinates."
+  unknown-world: "<red>Unknown world <world>."
+  removed: "<yellow>Removed <name>."
+  stopped: "<green><name> stopped."
+  action-set: "<green><name>: <action>"
+  following: "<green><name> is following <target>."
+  not-following: "<green><name> stopped following."
+  follow-disabled: "<red>Following is disabled on this server."
+  mounted: "<green><name> got on <vehicle>."
+  nothing-to-mount: "<red>Nothing rideable within 3 blocks of <name>."
+  player-not-found: "<red>No online player named <target>."
+  list-empty: "<gray>No bots online."
+  list-header: "<gold>Bots (<count>/<max>):"
+  list-entry: "<gray>- <white><name></white> owned by <owner> <dark_gray>(<world> <x> <y> <z>)"
+  reloaded: "<green>Config reloaded."
+  usage: "<red>Usage: <usage>"
+  help:
+    - "<gold>=== Egor's FakePlayer ==="
+    - "<gray>/player spawn <name> [x y z [world]] <white>- spawn a bot"
+    - "<gray>/player remove <name> <white>| <gray>/player list"
+    - "<gray>/player <bot> attack|use|jump [once|continuous|interval <ticks>]"
+    - "<dark_gray>  attack continuous = hold left click (mines), attack interval 20 = hit mobs every second"
+    - "<gray>/player <bot> mine <white>- same as attack continuous"
+    - "<gray>/player <bot> drop|dropstack|swaphands <white>| <gray>hotbar <1-9> <white>| <gray>inventory"
+    - "<gray>/player <bot> move forward|back|left|right|stop <white>| <gray>sneak|unsneak|sprint|unsprint"
+    - "<gray>/player <bot> look north|south|east|west|up|down|here|at <player>|<yaw> <pitch>"
+    - "<gray>/player <bot> turn left|right|back <white>| <gray>follow [player] <white>| <gray>unfollow"
+    - "<gray>/player <bot> mount <white>| <gray>dismount <white>| <gray>stop <white>- stop all actions"

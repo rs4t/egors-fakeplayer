@@ -1,3 +1,5 @@
-fakeplayer.jar
-lib/
-out/
+.gradle/
+build/
+.kotlin/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
